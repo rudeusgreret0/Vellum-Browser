@@ -1,0 +1,6 @@
+{
+  "name": "Vellum Browser",
+  "description": "An ultra-premium, quiet Android browser featuring a three-stage native Ad & Tracker Shield, Brave Search integration, bottom-weighted ergonomics, Reader Mode, and biometric-ready Private Vault.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

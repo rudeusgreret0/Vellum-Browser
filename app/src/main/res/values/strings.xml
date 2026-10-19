@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Vellum Browser</string>
+    <string name="search_or_enter_address">Search Brave or enter address…</string>
+    <string name="shield_active">Shield Active</string>
+    <string name="shield_paused">Shield Paused</string>
+    <string name="private_vault">Private Vault</string>
+    <string name="reader_mode">Reader View</string>
+    <string name="zap_element">Zap Distraction</string>
+    <string name="library_title">Library</string>
+    <string name="downloads_title">Downloads</string>
+    <string name="settings_title">Preferences</string>
+    <string name="incinerate_session">Incinerate Private Session</string>
+</resources>

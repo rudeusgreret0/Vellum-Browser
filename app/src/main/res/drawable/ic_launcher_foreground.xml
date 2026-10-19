@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.52"
+        android:scaleY="0.52"
+        android:translateX="5.76"
+        android:translateY="5.76">
+        <!-- Outer Shield Silhouette in Warm Champagne Gold -->
+        <path
+            android:fillColor="#D4A359"
+            android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5l-9,-4z" />
+        <!-- Inner Facet Cutout in Deep Obsidian -->
+        <path
+            android:fillColor="#141413"
+            android:pathData="M12,3.4L5,6.5v4.5c0,4.3 2.98,8.35 7,9.48 4.02,-1.13 7,-5.18 7,-9.48V6.5l-7,-3.1z" />
+        <!-- Architectural Vellum 'V' Monogram Inside Shield -->
+        <path
+            android:fillColor="#E5B973"
+            android:pathData="M7.5,7.5L10.2,7.5L12,13.2L13.8,7.5L16.5,7.5L13.1,16.8L10.9,16.8Z" />
+    </group>
+</vector>

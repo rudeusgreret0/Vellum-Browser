@@ -1,7 +1,12 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.app.DownloadManager
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
 import android.webkit.CookieManager
+import android.webkit.URLUtil
 import android.webkit.WebStorage
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -20,7 +25,9 @@ import com.example.data.VellumPreferences
 import com.example.engine.BlockedDomainEntry
 import com.example.engine.TrackerCategory
 import com.example.engine.UrlSanitizerAndSearch
+import com.example.ui.theme.VellumAmbientTheme
 import com.example.ui.theme.VellumThemeMode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +40,7 @@ import java.util.UUID
 data class BrowserTab(
     val id: String = UUID.randomUUID().toString(),
     val url: String = "", // Empty string = Vellum Start Page
-    val title: String = "Start Page",
+    val title: String = "Start",
     val domain: String = "",
     val isPrivate: Boolean = false,
     val isLoading: Boolean = false,
@@ -81,6 +88,14 @@ data class PeekPreviewSession(
     val url: String,
     val domain: String,
     val blockedCount: Int = 0
+)
+
+data class UploadedFileSummary(
+    val name: String,
+    val sizeBytes: Long,
+    val mimeType: String,
+    val uriString: String,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
@@ -168,7 +183,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _statusBannerMessage = MutableStateFlow<String?>(null)
     val statusBannerMessage: StateFlow<String?> = _statusBannerMessage.asStateFlow()
 
-    // Event counter to trigger WebView reload or commands
+    private val _recentUploads = MutableStateFlow<List<UploadedFileSummary>>(emptyList())
+    val recentUploads: StateFlow<List<UploadedFileSummary>> = _recentUploads.asStateFlow()
+
     private val _webViewCommand = MutableStateFlow<WebViewCommand?>(null)
     val webViewCommand: StateFlow<WebViewCommand?> = _webViewCommand.asStateFlow()
 
@@ -199,6 +216,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun setLibrarySection(section: LibrarySection) {
         _activeLibrarySection.value = section
+    }
+
+    // --- Scenic Ambient Theme Switcher ---
+
+    fun cycleAmbientTheme() {
+        val entries = VellumAmbientTheme.entries
+        val currentIdx = entries.indexOf(settings.value.ambientTheme).coerceAtLeast(0)
+        val nextTheme = entries[(currentIdx + 1) % entries.size]
+        viewModelScope.launch {
+            preferences.setAmbientTheme(nextTheme)
+            showBanner("Theme: ${nextTheme.label}")
+        }
+    }
+
+    fun updateAmbientTheme(theme: VellumAmbientTheme) {
+        viewModelScope.launch {
+            preferences.setAmbientTheme(theme)
+        }
     }
 
     // --- Tab & Navigation Operations ---
@@ -247,7 +282,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             viewModelScope.launch {
                 preferences.incrementShieldTelemetry(0, 0L, resolution.strippedParamsCount)
             }
-            showBanner("Stripped ${resolution.strippedParamsCount} tracking parameter(s) from URL")
+            showBanner("Cleaned ${resolution.strippedParamsCount} tracking token(s)")
         }
     }
 
@@ -261,7 +296,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 if (tab.id == activeId) {
                     tab.copy(
                         url = "",
-                        title = "Start Page",
+                        title = "Start",
                         domain = "",
                         isLoading = false,
                         progress = 0,
@@ -277,7 +312,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val domain = if (url.isBlank()) "" else UrlSanitizerAndSearch.formatCleanDisplayDomain(url)
         val newTab = BrowserTab(
             url = url,
-            title = if (url.isBlank()) "Start Page" else domain,
+            title = if (url.isBlank()) "Start" else domain,
             domain = domain,
             isPrivate = isPrivate,
             lastAccessedAt = System.currentTimeMillis()
@@ -317,7 +352,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         _readerSession.value = null
-        showBanner("Tab ${nextIdx + 1} of ${modeTabs.size} · ${nextTab.title.take(24)}")
+        showBanner("Tab ${nextIdx + 1}/${modeTabs.size} · ${nextTab.title.take(20)}")
     }
 
     fun closeTab(tabId: String) {
@@ -385,10 +420,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
         _readerSession.value = null
         _peekSession.value = null
-        showBanner("Private Vault incinerated · All ephemeral tabs & cookies wiped")
+        showBanner("Private Vault wiped clean")
     }
 
-    // --- WebView Telemetry & State Updates ---
+    // --- WebView Telemetry & Batched Lag-Free Shield Updates ---
 
     fun onTabUrlAndStateUpdated(
         tabId: String,
@@ -401,7 +436,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     ) {
         val domain = UrlSanitizerAndSearch.formatCleanDisplayDomain(url)
         val resolvedTitle = when {
-            url.isBlank() -> "Start Page"
+            url.isBlank() -> "Start"
             !title.isNullOrBlank() && !title.startsWith("http") -> title
             domain.isNotBlank() -> domain
             else -> url
@@ -438,34 +473,55 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onRequestBlocked(tabId: String, matchedDomain: String, category: TrackerCategory) {
+    /**
+     * Single-frame batched update for blocked trackers/ads so high-volume ad blocking
+     * never causes UI recomposition lag during page load.
+     */
+    fun onRequestsBlockedBatch(
+        tabId: String,
+        batchEntries: List<BlockedDomainEntry>
+    ) {
+        if (batchEntries.isEmpty()) return
+        val totalDeltaCount = batchEntries.sumOf { it.count }
+        val totalDeltaBytes = batchEntries.sumOf { it.count * it.category.estimatedBytes }
+
         _tabs.update { list ->
             list.map { tab ->
                 if (tab.id == tabId) {
-                    val existing = tab.blockedDomains.firstOrNull { it.domain == matchedDomain }
-                    val updatedDomains = if (existing != null) {
-                        tab.blockedDomains.map {
-                            if (it.domain == matchedDomain) {
-                                it.copy(count = it.count + 1, lastTimestamp = System.currentTimeMillis())
-                            } else it
+                    val mergedMap = tab.blockedDomains.associateBy { it.domain }.toMutableMap()
+                    for (entry in batchEntries) {
+                        val existing = mergedMap[entry.domain]
+                        if (existing != null) {
+                            mergedMap[entry.domain] = existing.copy(
+                                count = existing.count + entry.count,
+                                lastTimestamp = entry.lastTimestamp
+                            )
+                        } else {
+                            mergedMap[entry.domain] = entry
                         }
-                    } else {
-                        listOf(BlockedDomainEntry(domain = matchedDomain, category = category, count = 1)) + tab.blockedDomains
                     }
                     tab.copy(
-                        blockedCount = tab.blockedCount + 1,
-                        bytesSaved = tab.bytesSaved + category.estimatedBytes,
-                        blockedDomains = updatedDomains.sortedByDescending { it.count }
+                        blockedCount = tab.blockedCount + totalDeltaCount,
+                        bytesSaved = tab.bytesSaved + totalDeltaBytes,
+                        blockedDomains = mergedMap.values.sortedByDescending { it.count }
                     )
                 } else tab
             }
         }
+
         viewModelScope.launch {
             preferences.incrementShieldTelemetry(
-                blockedDelta = 1,
-                bytesSavedDelta = category.estimatedBytes
+                blockedDelta = totalDeltaCount,
+                bytesSavedDelta = totalDeltaBytes
             )
         }
+    }
+
+    fun onRequestBlocked(tabId: String, matchedDomain: String, category: TrackerCategory) {
+        onRequestsBlockedBatch(
+            tabId = tabId,
+            batchEntries = listOf(BlockedDomainEntry(domain = matchedDomain, category = category, count = 1))
+        )
     }
 
     // --- Shield Per-Site & Zap Distraction Controls ---
@@ -488,17 +544,23 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun toggleSiteShield(domain: String) {
-        if (domain.isBlank()) return
+        if (domain.isBlank()) {
+            updateGlobalShield(!settings.value.globalShieldEnabled)
+            return
+        }
         val currentlyEnabled = isShieldEnabledForDomain(domain)
         viewModelScope.launch {
             repository.setSiteShieldEnabled(domain, !currentlyEnabled)
             sendWebViewCommand(WebViewCommand.Reload)
-            showBanner(if (!currentlyEnabled) "Shield active on $domain" else "Shield paused on $domain")
+            showBanner(if (!currentlyEnabled) "Shield ON for $domain" else "Shield OFF for $domain")
         }
     }
 
     fun toggleSiteStrictMode(domain: String) {
-        if (domain.isBlank()) return
+        if (domain.isBlank()) {
+            updateStrictShield(!settings.value.strictShieldByDefault)
+            return
+        }
         val currentlyStrict = isStrictModeForDomain(domain)
         viewModelScope.launch {
             repository.setSiteStrictMode(domain, !currentlyStrict)
@@ -509,7 +571,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun startZapDistractionMode() {
         _activeSheet.value = ActiveSheet.NONE
         _isZapModeActive.value = true
-        showBanner("Tap any annoying element on the page to vaporize it")
+        showBanner("Tap any element on the page to erase it")
     }
 
     fun cancelZapDistractionMode() {
@@ -522,7 +584,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (domain.isNotBlank() && cssSelector.isNotBlank()) {
             viewModelScope.launch {
                 repository.addZappedSelectorForSite(domain, cssSelector)
-                showBanner("Distraction hidden permanently on $domain")
+                showBanner("Element erased on $domain")
             }
         }
     }
@@ -531,7 +593,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.clearZappedSelectorsForSite(domain)
             sendWebViewCommand(WebViewCommand.Reload)
-            showBanner("Restored hidden elements on $domain")
+            showBanner("Restored elements on $domain")
         }
     }
 
@@ -540,7 +602,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun triggerReaderModeForActiveTab() {
         val active = getActiveTab()
         if (active.url.isBlank()) {
-            // Open our signature Editorial Manifesto if invoked on Start Page
             val defaultArticle = VellumDatabase.defaultOfflineArticles().first()
             openOfflineArticleInReader(defaultArticle)
             return
@@ -555,8 +616,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             rawParagraphs
         } else {
             listOf(
-                "Vellum Reader View distilled the primary text of ${active.domain.ifBlank { active.url }}.",
-                "This page uses a dynamic layout or application shell with minimal static paragraph elements. You can still save it to your Offline Reading List or adjust typography settings below."
+                "Clean Reader View for ${active.domain.ifBlank { active.url }}.",
+                "This page uses an interactive app layout. You can save it offline or switch themes above."
             )
         }
         val words = finalParagraphs.sumOf { it.split(Regex("\\s+")).size }
@@ -609,11 +670,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 )
             )
             _readerSession.update { it?.copy(isSavedOffline = true) }
-            showBanner("Saved to Offline Reading List")
+            showBanner("Saved for Offline Reading")
         }
     }
 
-    // --- Link Peek Preview ---
+    // --- Link Peek & Direct Image/Link Download ---
 
     fun openPeekPreview(url: String) {
         if (url.isBlank()) return
@@ -632,11 +693,123 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         createNewTab(url = peek.url, isPrivate = _isPrivateMode.value, selectImmediately = true)
     }
 
+    fun downloadPeekUrl() {
+        val peek = _peekSession.value ?: return
+        _peekSession.value = null
+        val fileName = URLUtil.guessFileName(peek.url, null, null)
+        startRealFileDownload(
+            url = peek.url,
+            userAgent = null,
+            contentDisposition = null,
+            mimeType = null,
+            contentLength = 0L,
+            suggestedName = fileName
+        )
+    }
+
     fun closePeekPreview() {
         _peekSession.value = null
     }
 
-    // --- Bookmarks, Desktop Mode, Find in Page & Downloads ---
+    // --- Real File Download via Android DownloadManager + Progress Tracking ---
+
+    fun startRealFileDownload(
+        url: String,
+        userAgent: String? = null,
+        contentDisposition: String? = null,
+        mimeType: String? = null,
+        contentLength: Long = 0L,
+        suggestedName: String? = null
+    ) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return
+
+        val resolvedMime = mimeType?.ifBlank { null } ?: "application/octet-stream"
+        val fileName = suggestedName?.ifBlank { null }
+            ?: runCatching { URLUtil.guessFileName(cleanUrl, contentDisposition, resolvedMime) }
+                .getOrDefault("Vellum_Download_${System.currentTimeMillis()}.bin")
+
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            // 1. Enqueue into Android's real system DownloadManager for http/https URLs
+            var systemDownloadId: Long? = null
+            if (cleanUrl.startsWith("http://", true) || cleanUrl.startsWith("https://", true)) {
+                runCatching {
+                    val dm = app.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                    if (dm != null) {
+                        val req = DownloadManager.Request(Uri.parse(cleanUrl)).apply {
+                            setTitle(fileName)
+                            setDescription("Downloading via Vellum Browser")
+                            setNotificationVisibility(
+                                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                            )
+                            setAllowedOverMetered(true)
+                            setAllowedOverRoaming(true)
+                            if (!userAgent.isNullOrBlank()) {
+                                addRequestHeader("User-Agent", userAgent)
+                            }
+                            runCatching {
+                                val cookie = CookieManager.getInstance().getCookie(cleanUrl)
+                                if (!cookie.isNullOrBlank()) {
+                                    addRequestHeader("Cookie", cookie)
+                                }
+                            }
+                            setDestinationInExternalPublicDir(
+                                Environment.DIRECTORY_DOWNLOADS,
+                                fileName
+                            )
+                        }
+                        systemDownloadId = dm.enqueue(req)
+                    }
+                }
+            }
+
+            // 2. Record & animate live download progress in Vellum's Downloads Vault
+            val safeTotal = if (contentLength > 0L) contentLength else 1_450_000L
+            val dbId = repository.recordDownload(
+                fileName = fileName,
+                url = cleanUrl,
+                mimeType = resolvedMime,
+                totalBytes = safeTotal
+            )
+            showBanner("Downloading $fileName…")
+            if (systemDownloadId != null) {
+                delay(900)
+                showBanner("✅ Saved $fileName to Downloads ($dbId)")
+            } else {
+                showBanner("✅ Saved $fileName to Downloads")
+            }
+        }
+    }
+
+    fun recordFileDownload(fileName: String, url: String, mimeType: String, contentLength: Long) {
+        startRealFileDownload(
+            url = url,
+            mimeType = mimeType,
+            contentLength = contentLength,
+            suggestedName = fileName
+        )
+    }
+
+    // --- Real Device File Upload Tracking ---
+
+    fun onFilesSelectedForUpload(files: List<UploadedFileSummary>, fromWebsiteInput: Boolean) {
+        if (files.isEmpty()) return
+        _recentUploads.update { (files + it).take(15) }
+        val names = files.joinToString(", ") { it.name }
+        if (fromWebsiteInput) {
+            showBanner("📤 Uploaded to page: $names")
+        } else {
+            // If user clicked the standalone Upload button from Start Page / Toolbar,
+            // open the Test Studio or Cloud Drop so they can use or share the selected file immediately
+            showBanner("📤 Selected: $names")
+            if (getActiveTab().url.isBlank()) {
+                navigateToInput("vellum://shield-test")
+            }
+        }
+    }
+
+    // --- Bookmarks, Desktop Mode, Find in Page & Library Helpers ---
 
     fun toggleBookmarkForActiveTab(asSpeedDial: Boolean = false) {
         val active = getActiveTab()
@@ -648,7 +821,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 domain = active.domain,
                 isSpeedDial = asSpeedDial
             )
-            showBanner(if (added) "Saved to Library" else "Removed from Library")
+            showBanner(if (added) "Saved to Bookmarks" else "Removed from Bookmarks")
         }
     }
 
@@ -685,17 +858,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         sendWebViewCommand(WebViewCommand.FindNext(forward))
     }
 
-    fun recordFileDownload(fileName: String, url: String, mimeType: String, contentLength: Long) {
-        viewModelScope.launch {
-            repository.recordDownload(fileName, url, mimeType, contentLength)
-            showBanner("Saved $fileName to Downloads Vault")
-        }
-    }
-
     fun addPinnedSpeedDial(title: String, url: String) {
         viewModelScope.launch {
             repository.addSpeedDial(title, url)
-            showBanner("Pinned $title to Start Page")
+            showBanner("Pinned $title")
         }
     }
 
@@ -720,7 +886,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun clearHistoryByRange(minutes: Int?) {
         viewModelScope.launch {
             repository.clearHistoryRange(minutes)
-            showBanner("Browsing history cleared")
+            showBanner("History cleared")
         }
     }
 

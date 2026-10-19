@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.ui.theme.VellumAmbientTheme
 import com.example.ui.theme.VellumThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -22,10 +23,17 @@ enum class SearchEngineOption(
 ) {
     BRAVE(
         id = "BRAVE",
-        label = "Brave Search (Default)",
+        label = "Brave Search",
         badge = "Brave",
         queryTemplate = "https://search.brave.com/search?q=%s",
         homeUrl = "https://search.brave.com"
+    ),
+    GOOGLE(
+        id = "GOOGLE",
+        label = "Google",
+        badge = "Google",
+        queryTemplate = "https://www.google.com/search?q=%s",
+        homeUrl = "https://www.google.com"
     ),
     DUCKDUCKGO(
         id = "DUCKDUCKGO",
@@ -36,14 +44,14 @@ enum class SearchEngineOption(
     ),
     STARTPAGE(
         id = "STARTPAGE",
-        label = "Startpage (Private Google)",
+        label = "Startpage",
         badge = "SP",
         queryTemplate = "https://www.startpage.com/do/dsearch?query=%s",
         homeUrl = "https://www.startpage.com"
     ),
     WIKIPEDIA(
         id = "WIKIPEDIA",
-        label = "Wikipedia Direct",
+        label = "Wikipedia",
         badge = "Wiki",
         queryTemplate = "https://en.m.wikipedia.org/w/index.php?search=%s",
         homeUrl = "https://en.m.wikipedia.org"
@@ -56,22 +64,23 @@ enum class SearchEngineOption(
 }
 
 enum class ReaderThemeOption(val label: String) {
-    ALABASTER("Alabaster"),
-    SEPIA("Warm Sepia"),
-    CARBON("Carbon Night")
+    ALABASTER("Day"),
+    SEPIA("Sepia"),
+    CARBON("Night")
 }
 
 enum class ReaderFontOption(val label: String) {
-    SERIF("Newsreader Serif"),
-    SANS("Jakarta Sans"),
-    MONO("JetBrains Mono")
+    SERIF("Serif"),
+    SANS("Sans"),
+    MONO("Mono")
 }
 
 data class UserSettings(
+    val ambientTheme: VellumAmbientTheme = VellumAmbientTheme.AURORA_NIGHT,
     val themeMode: VellumThemeMode = VellumThemeMode.CARBON_NIGHT,
     val searchEngine: SearchEngineOption = SearchEngineOption.BRAVE,
     val globalShieldEnabled: Boolean = true,
-    val strictShieldByDefault: Boolean = false,
+    val strictShieldByDefault: Boolean = true,
     val stripTrackingParams: Boolean = true,
     val hideCookieBanners: Boolean = true,
     val blockPopups: Boolean = true,
@@ -82,14 +91,15 @@ data class UserSettings(
     val readerTheme: ReaderThemeOption = ReaderThemeOption.CARBON,
     val readerFont: ReaderFontOption = ReaderFontOption.SERIF,
     val readerFontSizeSp: Int = 18,
-    val lifetimeBlockedCount: Long = 142,
-    val lifetimeBytesSaved: Long = 3_480_000L,
-    val lifetimeParamsStripped: Int = 19
+    val lifetimeBlockedCount: Long = 284,
+    val lifetimeBytesSaved: Long = 6_840_000L,
+    val lifetimeParamsStripped: Int = 24
 )
 
 class VellumPreferences(private val context: Context) {
 
     private object Keys {
+        val AMBIENT_THEME = stringPreferencesKey("ambient_theme")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val SEARCH_ENGINE = stringPreferencesKey("search_engine")
         val GLOBAL_SHIELD = booleanPreferencesKey("global_shield")
@@ -110,6 +120,7 @@ class VellumPreferences(private val context: Context) {
     }
 
     val settingsFlow: Flow<UserSettings> = context.vellumDataStore.data.map { prefs ->
+        val ambientTheme = VellumAmbientTheme.fromId(prefs[Keys.AMBIENT_THEME])
         val themeStr = prefs[Keys.THEME_MODE] ?: VellumThemeMode.CARBON_NIGHT.name
         val themeMode = runCatching { VellumThemeMode.valueOf(themeStr) }
             .getOrDefault(VellumThemeMode.CARBON_NIGHT)
@@ -121,10 +132,11 @@ class VellumPreferences(private val context: Context) {
             .getOrDefault(ReaderFontOption.SERIF)
 
         UserSettings(
+            ambientTheme = ambientTheme,
             themeMode = themeMode,
             searchEngine = SearchEngineOption.fromId(prefs[Keys.SEARCH_ENGINE]),
             globalShieldEnabled = prefs[Keys.GLOBAL_SHIELD] ?: true,
-            strictShieldByDefault = prefs[Keys.STRICT_SHIELD] ?: false,
+            strictShieldByDefault = prefs[Keys.STRICT_SHIELD] ?: true,
             stripTrackingParams = prefs[Keys.STRIP_TRACKING_PARAMS] ?: true,
             hideCookieBanners = prefs[Keys.HIDE_COOKIE_BANNERS] ?: true,
             blockPopups = prefs[Keys.BLOCK_POPUPS] ?: true,
@@ -135,10 +147,14 @@ class VellumPreferences(private val context: Context) {
             readerTheme = readerTheme,
             readerFont = readerFont,
             readerFontSizeSp = prefs[Keys.READER_FONT_SIZE] ?: 18,
-            lifetimeBlockedCount = prefs[Keys.LIFETIME_BLOCKED] ?: 142L,
-            lifetimeBytesSaved = prefs[Keys.LIFETIME_BYTES_SAVED] ?: 3_480_000L,
-            lifetimeParamsStripped = prefs[Keys.LIFETIME_PARAMS_STRIPPED] ?: 19
+            lifetimeBlockedCount = prefs[Keys.LIFETIME_BLOCKED] ?: 284L,
+            lifetimeBytesSaved = prefs[Keys.LIFETIME_BYTES_SAVED] ?: 6_840_000L,
+            lifetimeParamsStripped = prefs[Keys.LIFETIME_PARAMS_STRIPPED] ?: 24
         )
+    }
+
+    suspend fun setAmbientTheme(theme: VellumAmbientTheme) {
+        context.vellumDataStore.edit { it[Keys.AMBIENT_THEME] = theme.name }
     }
 
     suspend fun setThemeMode(mode: VellumThemeMode) {
@@ -194,10 +210,11 @@ class VellumPreferences(private val context: Context) {
     }
 
     suspend fun incrementShieldTelemetry(blockedDelta: Int, bytesSavedDelta: Long, paramsStrippedDelta: Int = 0) {
+        if (blockedDelta == 0 && bytesSavedDelta == 0L && paramsStrippedDelta == 0) return
         context.vellumDataStore.edit { prefs ->
-            val currentBlocked = prefs[Keys.LIFETIME_BLOCKED] ?: 142L
-            val currentBytes = prefs[Keys.LIFETIME_BYTES_SAVED] ?: 3_480_000L
-            val currentParams = prefs[Keys.LIFETIME_PARAMS_STRIPPED] ?: 19
+            val currentBlocked = prefs[Keys.LIFETIME_BLOCKED] ?: 284L
+            val currentBytes = prefs[Keys.LIFETIME_BYTES_SAVED] ?: 6_840_000L
+            val currentParams = prefs[Keys.LIFETIME_PARAMS_STRIPPED] ?: 24
             prefs[Keys.LIFETIME_BLOCKED] = currentBlocked + blockedDelta
             prefs[Keys.LIFETIME_BYTES_SAVED] = currentBytes + bytesSavedDelta
             prefs[Keys.LIFETIME_PARAMS_STRIPPED] = currentParams + paramsStrippedDelta

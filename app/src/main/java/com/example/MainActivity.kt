@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -71,7 +70,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Handle external http/https VIEW intents
         intent?.dataString?.let { incomingUrl ->
             if (incomingUrl.startsWith("http://") || incomingUrl.startsWith("https://")) {
                 viewModel.navigateToInput(incomingUrl)
@@ -83,7 +81,7 @@ class MainActivity : ComponentActivity() {
             val isPrivateMode by viewModel.isPrivateMode.collectAsStateWithLifecycle()
 
             VellumTheme(
-                themeMode = settings.themeMode,
+                ambientTheme = settings.ambientTheme,
                 isPrivateMode = isPrivateMode
             ) {
                 VellumBrowserApp(viewModel = viewModel)
@@ -107,6 +105,7 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
     val offlineArticles by viewModel.offlineArticles.collectAsStateWithLifecycle()
     val siteRules by viewModel.siteRules.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+    val recentUploads by viewModel.recentUploads.collectAsStateWithLifecycle()
     val activeSheet by viewModel.activeSheet.collectAsStateWithLifecycle()
     val activeLibrarySection by viewModel.activeLibrarySection.collectAsStateWithLifecycle()
     val readerSession by viewModel.readerSession.collectAsStateWithLifecycle()
@@ -126,15 +125,13 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
     val strictModeOnSite = viewModel.isStrictModeForDomain(activeTab.domain)
     val zappedCountOnSite = viewModel.getZappedSelectorsForDomain(activeTab.domain).size
 
-    // Auto-dismiss transient status banners after 2.8 seconds
     LaunchedEffect(statusBannerMessage) {
         if (statusBannerMessage != null) {
-            delay(2800)
+            delay(2500)
             viewModel.dismissBanner()
         }
     }
 
-    // Comprehensive System Back Navigation Handler
     BackHandler(
         enabled = readerSession != null ||
             peekSession != null ||
@@ -217,8 +214,6 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
                         }
                     )
             ) {
-                // Keep VellumWebViewViewport permanently mounted so switching to/from
-                // the Start Page never destroys the Chromium renderer process
                 VellumWebViewViewport(
                     activeTab = activeTab,
                     viewModel = viewModel,
@@ -234,32 +229,25 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
                         isPrivateMode = isPrivateMode,
                         speedDials = speedDials,
                         offlineArticles = offlineArticles,
-                        onOpenOmnibox = { prefill ->
-                            if (prefill.isNotBlank()) {
-                                viewModel.openSheet(ActiveSheet.OMNIBOX_EDITOR)
-                            } else {
-                                viewModel.openSheet(ActiveSheet.OMNIBOX_EDITOR)
-                            }
-                        },
+                        onOpenOmnibox = { viewModel.openSheet(ActiveSheet.OMNIBOX_EDITOR) },
                         onNavigateToUrl = { url -> viewModel.navigateToInput(url) },
                         onOpenShieldSheet = { viewModel.openSheet(ActiveSheet.SHIELD_INSPECTOR) },
                         onOpenLibrary = { viewModel.openSheet(ActiveSheet.LIBRARY, LibrarySection.BOOKMARKS) },
                         onOpenDownloads = { viewModel.openSheet(ActiveSheet.DOWNLOADS) },
                         onOpenSettings = { viewModel.openSheet(ActiveSheet.SETTINGS) },
                         onOpenOfflineArticle = { article -> viewModel.openOfflineArticleInReader(article) },
-                        onAddSpeedDial = { title, url ->
-                            viewModel.addPinnedSpeedDial(title, url)
-                        },
-                        onDeleteSpeedDial = { id ->
-                            viewModel.removeBookmark(id)
-                        },
-                        onIncineratePrivate = { viewModel.incineratePrivateSession() }
+                        onAddSpeedDial = { title, url -> viewModel.addPinnedSpeedDial(title, url) },
+                        onDeleteSpeedDial = { id -> viewModel.removeBookmark(id) },
+                        onIncineratePrivate = { viewModel.incineratePrivateSession() },
+                        onCycleAmbientTheme = { viewModel.cycleAmbientTheme() },
+                        onFilesPickedFromStart = { files ->
+                            viewModel.onFilesSelectedForUpload(files, fromWebsiteInput = false)
+                        }
                     )
                 }
             }
         }
 
-        // Fullscreen Omnibox Command Overlay
         AnimatedVisibility(
             visible = activeSheet == ActiveSheet.OMNIBOX_EDITOR,
             enter = fadeIn(),
@@ -275,7 +263,6 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
             )
         }
 
-        // Editorial Reader Mode Fullscreen Overlay
         AnimatedVisibility(
             visible = readerSession != null,
             enter = fadeIn(),
@@ -294,7 +281,6 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
             }
         }
 
-        // Modal Bottom Sheets
         when (activeSheet) {
             ActiveSheet.SHIELD_INSPECTOR -> {
                 VellumShieldInspectorSheet(
@@ -349,7 +335,7 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, cleanUrl)
                         }
-                        context.startActivity(Intent.createChooser(sendIntent, "Share Clean Link"))
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Link"))
                     },
                     onOpenSettings = { viewModel.openSheet(ActiveSheet.SETTINGS) },
                     onDismiss = { viewModel.closeSheet() }
@@ -376,6 +362,13 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
             ActiveSheet.DOWNLOADS -> {
                 VellumDownloadsVaultSheet(
                     downloads = downloads,
+                    recentUploads = recentUploads,
+                    onStartDirectDownload = { url ->
+                        viewModel.startRealFileDownload(url = url)
+                    },
+                    onFilesUploaded = { files ->
+                        viewModel.onFilesSelectedForUpload(files, fromWebsiteInput = false)
+                    },
                     onDeleteDownload = { id -> viewModel.removeDownloadItem(id) },
                     onClearAllDownloads = { viewModel.clearDownloadsVault() },
                     onDismiss = { viewModel.closeSheet() }
@@ -386,6 +379,7 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
                 VellumSettingsSheet(
                     settings = settings,
                     siteRules = siteRules,
+                    onUpdateAmbientTheme = { viewModel.updateAmbientTheme(it) },
                     onUpdateTheme = { viewModel.updateThemeMode(it) },
                     onUpdateSearchEngine = { viewModel.updateSearchEngine(it) },
                     onUpdateGlobalShield = { viewModel.updateGlobalShield(it) },
@@ -401,16 +395,15 @@ fun VellumBrowserApp(viewModel: BrowserViewModel) {
             ActiveSheet.NONE, ActiveSheet.OMNIBOX_EDITOR -> Unit
         }
 
-        // Vellum Peek Link Preview Sheet
         peekSession?.let { peek ->
             VellumPeekPreviewSheet(
                 peekSession = peek,
                 onPromoteToTab = { viewModel.promotePeekToFullTab() },
+                onDownloadUrl = { viewModel.downloadPeekUrl() },
                 onDismiss = { viewModel.closePeekPreview() }
             )
         }
 
-        // Subtle Tactile Status Pill Banner at Top
         AnimatedVisibility(
             visible = statusBannerMessage != null,
             enter = slideInVertically { -it } + fadeIn(),

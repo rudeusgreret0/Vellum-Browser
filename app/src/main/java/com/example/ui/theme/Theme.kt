@@ -1,99 +1,87 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
+// Legacy compatibility enum mapped to VellumAmbientTheme
 enum class VellumThemeMode {
     SYSTEM,
     ALABASTER_DAY,
     CARBON_NIGHT
 }
 
-private val AlabasterLightColorScheme = lightColorScheme(
-    primary = BurnishedBronze,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFF7E4DC),
-    onPrimaryContainer = Color(0xFF4A1D10),
-    secondary = ForestShieldEmerald,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFD9EFE8),
-    onSecondaryContainer = Color(0xFF0B3829),
-    tertiary = ChampagneGold,
-    background = AlabasterCanvas,
-    onBackground = ObsidianInk,
-    surface = IvorySurface,
-    onSurface = ObsidianInk,
-    surfaceVariant = StoneSurfaceVariant,
-    onSurfaceVariant = SlateSecondaryInk,
-    outline = HairlineLight,
-    outlineVariant = Color(0xFFEAE7DF)
-)
-
-private val CarbonDarkColorScheme = darkColorScheme(
-    primary = ChampagneGold,
-    onPrimary = Color(0xFF1A140B),
-    primaryContainer = Color(0xFF3A2D18),
-    onPrimaryContainer = Color(0xFFF5DFB8),
-    secondary = MineralJade,
-    onSecondary = Color(0xFF072118),
-    secondaryContainer = Color(0xFF163D31),
-    onSecondaryContainer = Color(0xFFB8EBD9),
-    tertiary = BurnishedBronze,
-    background = CarbonCanvas,
-    onBackground = ParchmentInk,
-    surface = BasaltSurface,
-    onSurface = ParchmentInk,
-    surfaceVariant = BasaltElevated,
-    onSurfaceVariant = AshSecondaryInk,
-    outline = HairlineDark,
-    outlineVariant = Color(0xFF22242B)
-)
-
-private val NocturnePrivateColorScheme = darkColorScheme(
-    primary = NocturneAccent,
-    onPrimary = Color(0xFF0A101D),
-    primaryContainer = Color(0xFF1E2B45),
-    onPrimaryContainer = Color(0xFFD5E3F7),
-    secondary = MineralJade,
-    onSecondary = Color(0xFF072118),
-    secondaryContainer = Color(0xFF163D31),
-    onSecondaryContainer = Color(0xFFB8EBD9),
-    tertiary = NocturneCrimson,
-    background = NocturneCanvas,
-    onBackground = ParchmentInk,
-    surface = NocturneSurface,
-    onSurface = ParchmentInk,
-    surfaceVariant = NocturneElevated,
-    onSurfaceVariant = Color(0xFF9BA6B8),
-    outline = NocturneHairline,
-    outlineVariant = Color(0xFF1D243B)
-)
+val LocalAmbientTheme = staticCompositionLocalOf { VellumAmbientTheme.AURORA_NIGHT }
 
 @Composable
 fun VellumTheme(
-    themeMode: VellumThemeMode = VellumThemeMode.CARBON_NIGHT,
+    ambientTheme: VellumAmbientTheme = VellumAmbientTheme.AURORA_NIGHT,
     isPrivateMode: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val isDark = when (themeMode) {
-        VellumThemeMode.SYSTEM -> isSystemInDarkTheme()
-        VellumThemeMode.ALABASTER_DAY -> false
-        VellumThemeMode.CARBON_NIGHT -> true
-    }
-
     val colorScheme = when {
-        isPrivateMode -> NocturnePrivateColorScheme
-        isDark -> CarbonDarkColorScheme
-        else -> AlabasterLightColorScheme
+        isPrivateMode -> darkColorScheme(
+            primary = PrivateVaultAccent,
+            onPrimary = Color(0xFF1A0933),
+            primaryContainer = Color(0xFF2E1B59),
+            onPrimaryContainer = Color(0xFFF3E8FF),
+            secondary = Color(0xFF38BDF8),
+            onSecondary = Color(0xFF062030),
+            tertiary = PrivateVaultCrimson,
+            background = PrivateVaultSkyTop,
+            onBackground = Color(0xFFF8FAFC),
+            surface = PrivateVaultSurface,
+            onSurface = Color(0xFFF8FAFC),
+            surfaceVariant = Color(0xFF251848),
+            onSurfaceVariant = Color(0xFFC4B5FD),
+            outline = Color(0x45C084FC),
+            outlineVariant = Color(0x25C084FC)
+        )
+        ambientTheme.isDark -> darkColorScheme(
+            primary = ambientTheme.primaryAccent,
+            onPrimary = Color(0xFF04151F),
+            primaryContainer = ambientTheme.primaryAccent.copy(alpha = 0.2f),
+            onPrimaryContainer = ambientTheme.textPrimary,
+            secondary = ambientTheme.secondaryAccent,
+            onSecondary = Color(0xFF04151F),
+            tertiary = Color(0xFFFB7185),
+            background = ambientTheme.skyTop,
+            onBackground = ambientTheme.textPrimary,
+            surface = ambientTheme.surfaceColor,
+            onSurface = ambientTheme.textPrimary,
+            surfaceVariant = ambientTheme.skyMid,
+            onSurfaceVariant = ambientTheme.textSecondary,
+            outline = ambientTheme.cardBorder,
+            outlineVariant = ambientTheme.cardBorder.copy(alpha = 0.15f)
+        )
+        else -> lightColorScheme(
+            primary = ambientTheme.primaryAccent,
+            onPrimary = Color.White,
+            primaryContainer = ambientTheme.primaryAccent.copy(alpha = 0.14f),
+            onPrimaryContainer = ambientTheme.textPrimary,
+            secondary = ambientTheme.secondaryAccent,
+            onSecondary = Color.White,
+            tertiary = Color(0xFFE11D48),
+            background = ambientTheme.skyBottom,
+            onBackground = ambientTheme.textPrimary,
+            surface = ambientTheme.surfaceColor,
+            onSurface = ambientTheme.textPrimary,
+            surfaceVariant = ambientTheme.skyMid,
+            onSurfaceVariant = ambientTheme.textSecondary,
+            outline = ambientTheme.cardBorder,
+            outlineVariant = ambientTheme.cardBorder.copy(alpha = 0.15f)
+        )
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    CompositionLocalProvider(LocalAmbientTheme provides ambientTheme) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

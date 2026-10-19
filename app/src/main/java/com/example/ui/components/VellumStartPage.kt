@@ -1,6 +1,15 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,13 +33,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.LocalFireDepartment
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Science
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
@@ -40,7 +48,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,8 +60,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -64,10 +74,16 @@ import androidx.compose.ui.unit.sp
 import com.example.data.BookmarkEntity
 import com.example.data.OfflineArticleEntity
 import com.example.data.UserSettings
-import com.example.engine.UrlSanitizerAndSearch
 import com.example.ui.theme.JetBrainsMonoFamily
-import com.example.ui.theme.NewsreaderSerifFamily
-import java.util.Calendar
+import com.example.ui.theme.LocalAmbientTheme
+import com.example.ui.theme.PlusJakartaSansFamily
+import com.example.ui.theme.PrivateVaultAccent
+import com.example.ui.theme.PrivateVaultSkyBottom
+import com.example.ui.theme.PrivateVaultSkyTop
+import com.example.ui.theme.VellumAmbientTheme
+import com.example.viewmodel.UploadedFileSummary
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -87,543 +103,405 @@ fun VellumStartPage(
     onAddSpeedDial: (String, String) -> Unit,
     onDeleteSpeedDial: (Long) -> Unit,
     onIncineratePrivate: () -> Unit,
+    onCycleAmbientTheme: () -> Unit = {},
+    onFilesPickedFromStart: (List<UploadedFileSummary>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val ambient = LocalAmbientTheme.current
+
     var showAddDialDialog by remember { mutableStateOf(false) }
     var dialToDelete by remember { mutableStateOf<BookmarkEntity?>(null) }
 
-    val hour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
-    val greeting = when {
-        isPrivateMode -> "Nocturne Vault"
-        hour < 12 -> "Quiet morning."
-        hour < 18 -> "Focused afternoon."
-        else -> "Calm evening."
+    val directUploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val summaries = uris.map { extractFileMetadata(context, it) }
+            onFilesPickedFromStart(summaries)
+        }
     }
 
-    val subGreeting = if (isPrivateMode) {
-        "Zero history, zero persistent cookies, full network shield."
-    } else {
-        "Independent search & three-stage tracker protection."
+    val currentTimeStr = remember {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+    }
+    val currentDateStr = remember {
+        SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(Date())
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.TopCenter
-    ) {
+    val savedMbStr = remember(settings.lifetimeBytesSaved) {
+        String.format(Locale.US, "%.1f MB", settings.lifetimeBytesSaved / 1_000_000f)
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        // 1. Scenic Multi-Layer Ambient Wallpaper Canvas
+        ScenicAmbientWallpaper(
+            ambient = ambient,
+            isPrivateMode = isPrivateMode,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // 2. Clean, Minimal-Text, Visual Start Content
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 600.dp)
+                .widthIn(max = 560.dp)
+                .align(Alignment.TopCenter)
                 .fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp)
         ) {
-            // 1. Minimalist Top Context Bar
+            // Top Glass Action Bar
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // 1-Tap Scenic Theme Switcher Pill
                     Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(99.dp))
+                            .background(ambient.surfaceGlass)
+                            .border(1.dp, ambient.cardBorder, RoundedCornerShape(99.dp))
+                            .clickable { onCycleAmbientTheme() }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .testTag("cycle_theme_button"),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                                .border(
-                                    0.75.dp,
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                    RoundedCornerShape(8.dp)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "V",
-                                fontFamily = NewsreaderSerifFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Outlined.Palette,
+                            contentDescription = "Change Theme",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Text(
-                            text = if (isPrivateMode) "VELLUM · PRIVATE" else "VELLUM",
-                            style = MaterialTheme.typography.labelMedium,
-                            letterSpacing = 1.6.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (isPrivateMode) "Private" else ambient.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
 
+                    // Top Quick Icon Buttons
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        IconButton(
-                            onClick = onOpenLibrary,
-                            modifier = Modifier.testTag("start_library_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.BookmarkBorder,
-                                contentDescription = "Open Library",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(
+                        GlassCircleIconButton(
+                            icon = Icons.Outlined.CloudUpload,
+                            contentDescription = "Upload File",
+                            onClick = { directUploadLauncher.launch(arrayOf("*/*")) },
+                            testTag = "start_upload_button"
+                        )
+                        GlassCircleIconButton(
+                            icon = Icons.Outlined.Download,
+                            contentDescription = "Downloads",
                             onClick = onOpenDownloads,
-                            modifier = Modifier.testTag("start_downloads_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Download,
-                                contentDescription = "Open Downloads",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(
+                            testTag = "start_downloads_button"
+                        )
+                        GlassCircleIconButton(
+                            icon = Icons.Outlined.BookmarkBorder,
+                            contentDescription = "Saved",
+                            onClick = onOpenLibrary,
+                            testTag = "start_library_button"
+                        )
+                        GlassCircleIconButton(
+                            icon = Icons.Outlined.Settings,
+                            contentDescription = "Settings",
                             onClick = onOpenSettings,
-                            modifier = Modifier.testTag("start_settings_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Settings,
-                                contentDescription = "Open Preferences",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                            testTag = "start_settings_button"
+                        )
                     }
                 }
             }
 
-            // 2. Editorial Greeting & Brave Search Hero Trigger
+            // Center Clock & Compact Shield Status Pill
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = greeting,
-                        style = MaterialTheme.typography.displayLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = subGreeting,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // 3. Tactile Brave Search & Command Bar
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable { onOpenOmnibox("") }
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outline,
-                                shape = RoundedCornerShape(18.dp)
-                            )
-                            .testTag("start_page_search_bar"),
-                        color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 2.dp
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 15.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Search,
-                                    contentDescription = "Search",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Search ${settings.searchEngine.badge} or enter address…",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = settings.searchEngine.badge.uppercase(Locale.US),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-
-                    // Instant !bang shortcut chips
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        UrlSanitizerAndSearch.bangShortcuts.take(4).forEach { bang ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
-                                    .border(
-                                        0.75.dp,
-                                        MaterialTheme.colorScheme.outline,
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                    .clickable { onOpenOmnibox("${bang.trigger} ") }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                                    .testTag("bang_chip_${bang.trigger.removePrefix("!")}")
-                            ) {
-                                Text(
-                                    text = "${bang.trigger} ${bang.name}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. Live Ad & Tracker Shield Telemetry Card + Interactive Diagnostic Launcher
-            item {
-                val formattedSaved = remember(settings.lifetimeBytesSaved) {
-                    String.format(Locale.US, "%.1f MB", settings.lifetimeBytesSaved / 1_000_000f)
-                }
-
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.surface,
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
-                                )
-                            )
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outline,
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                        .clickable { onOpenShieldSheet() }
-                        .padding(18.dp)
-                        .testTag("start_shield_telemetry_card")
+                        .padding(top = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (settings.globalShieldEnabled) {
-                                        Icons.Outlined.VerifiedUser
-                                    } else {
-                                        Icons.Outlined.Shield
-                                    },
-                                    contentDescription = "Shield Status",
-                                    tint = if (settings.globalShieldEnabled) {
-                                        MaterialTheme.colorScheme.secondary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = if (settings.globalShieldEnabled) {
-                                        "VELLUM SHIELD · ACTIVE"
-                                    } else {
-                                        "VELLUM SHIELD · PAUSED"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (settings.globalShieldEnabled) {
-                                        MaterialTheme.colorScheme.secondary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                            }
+                    Text(
+                        text = currentTimeStr,
+                        fontFamily = PlusJakartaSansFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 54.sp,
+                        letterSpacing = (-1.5).sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
 
-                            Text(
-                                text = if (settings.strictShieldByDefault) "STRICT MODE" else "STANDARD",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    Text(
+                        text = currentDateStr.uppercase(Locale.US),
+                        style = MaterialTheme.typography.labelMedium,
+                        letterSpacing = 2.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            TelemetryStatBlock(
-                                value = "%,d".format(Locale.US, settings.lifetimeBlockedCount),
-                                label = "Trackers & Ads Stopped"
-                            )
-                            TelemetryStatBlock(
-                                value = formattedSaved,
-                                label = "Data Bandwidth Saved"
-                            )
-                            TelemetryStatBlock(
-                                value = "${settings.lifetimeParamsStripped}",
-                                label = "URL Tokens Stripped"
-                            )
-                        }
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { onNavigateToUrl("vellum://shield-test") },
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("launch_shield_test_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Science,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Live Shield Benchmark",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
-                        }
+                    // Compact Interactive Ad-Blocker Status Pill
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(99.dp))
+                            .background(ambient.surfaceGlass)
+                            .border(1.dp, ambient.cardBorder, RoundedCornerShape(99.dp))
+                            .clickable { onOpenShieldSheet() }
+                            .padding(horizontal = 16.dp, vertical = 9.dp)
+                            .testTag("start_shield_telemetry_card"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (settings.globalShieldEnabled) {
+                                Icons.Outlined.VerifiedUser
+                            } else {
+                                Icons.Outlined.Shield
+                            },
+                            contentDescription = "Ad Blocker",
+                            tint = if (settings.globalShieldEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "%,d Blocked".format(Locale.US, settings.lifetimeBlockedCount),
+                            fontFamily = JetBrainsMonoFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "•",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "$savedMbStr Saved",
+                            fontFamily = JetBrainsMonoFamily,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
 
-            // 5. Private Vault Quick Incinerate Callout (only in Private Mode)
+            // Floating Frosted Glass Search Pill
             item {
-                AnimatedVisibility(visible = isPrivateMode) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable { onOpenOmnibox("") }
+                        .border(
+                            width = 1.2.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        .testTag("start_page_search_bar"),
+                    color = ambient.surfaceGlass,
+                    tonalElevation = 4.dp
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f),
-                                RoundedCornerShape(16.dp)
-                            )
-                            .clickable { onIncineratePrivate() }
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
-                            .testTag("start_incinerate_private_button"),
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.weight(1f)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.LocalFireDepartment,
-                                contentDescription = "Incinerate",
-                                tint = MaterialTheme.colorScheme.tertiary
-                            )
-                            Column {
-                                Text(
-                                    text = "Incinerate Private Vault",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Wipe all private tabs, DOM storage & session cookies in 1 tap",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 6. Curated Monogram Speed Dials (4x2 Grid)
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "PINNED DESTINATIONS",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showAddDialDialog = true }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .testTag("add_speed_dial_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Add,
-                                contentDescription = "Add Destination",
+                                imageVector = Icons.Outlined.Search,
+                                contentDescription = "Search",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(22.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Add Dial",
+                                text = "Search ${settings.searchEngine.badge} or enter URL…",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = settings.searchEngine.badge,
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
+                }
+            }
 
-                    val chunkedDials = remember(speedDials) { speedDials.chunked(4) }
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        chunkedDials.forEach { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                rowItems.forEach { dial ->
-                                    SpeedDialItemCard(
-                                        dial = dial,
-                                        onClick = { onNavigateToUrl(dial.url) },
-                                        onLongClick = { dialToDelete = dial },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                                repeat(4 - rowItems.size) {
+            // 4x2 Visual Icon Grid (Minimal 1-Word Labels)
+            item {
+                val chunkedDials = remember(speedDials) { speedDials.chunked(4) }
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    chunkedDials.forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            rowItems.forEach { dial ->
+                                VisualSpeedDialIcon(
+                                    dial = dial,
+                                    glassColor = ambient.surfaceGlass,
+                                    onClick = { onNavigateToUrl(dial.url) },
+                                    onLongClick = { dialToDelete = dial },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (rowItems.size < 4) {
+                                // Add '+' button in the remaining slot
+                                AddSpeedDialTile(
+                                    glassColor = ambient.surfaceGlass,
+                                    borderColor = ambient.cardBorder,
+                                    onClick = { showAddDialDialog = true },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                repeat((3 - rowItems.size).coerceAtLeast(0)) {
                                     Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
                     }
-                }
-            }
 
-            // 7. Offline Editorial Reading Sanctuary
-            if (offlineArticles.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "OFFLINE READER SANCTUARY",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        offlineArticles.take(2).forEach { article ->
-                            Surface(
+                    if (speedDials.size % 4 == 0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .clickable { onOpenOfflineArticle(article) }
-                                    .border(
-                                        1.dp,
-                                        MaterialTheme.colorScheme.outline,
-                                        RoundedCornerShape(16.dp)
-                                    )
-                                    .testTag("offline_article_card_${article.id}"),
-                                color = MaterialTheme.colorScheme.surface
+                                    .clip(RoundedCornerShape(99.dp))
+                                    .background(ambient.surfaceGlass)
+                                    .border(1.dp, ambient.cardBorder, RoundedCornerShape(99.dp))
+                                    .clickable { showAddDialDialog = true }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                                    .testTag("add_speed_dial_button"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.AutoStories,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                            Text(
-                                                text = article.domain.uppercase(Locale.US),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        Text(
-                                            text = "${article.readingMinutes} min read · ${article.wordCount} words",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    Text(
-                                        text = article.title,
-                                        fontFamily = NewsreaderSerifFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 19.sp,
-                                        lineHeight = 24.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-
-                                    Text(
-                                        text = article.excerpt,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Outlined.Add,
+                                    contentDescription = "Add",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Pin Site",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     }
                 }
             }
 
+            // 3 Compact Visual Action Pills (Ad Blocker, File Upload, Downloads)
             item {
-                Spacer(modifier = Modifier.height(72.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CompactActionCard(
+                        icon = Icons.Outlined.VerifiedUser,
+                        label = "Ad Blocker",
+                        glassColor = ambient.surfaceGlass,
+                        borderColor = ambient.cardBorder,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        onClick = onOpenShieldSheet,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("launch_shield_test_button")
+                    )
+                    CompactActionCard(
+                        icon = Icons.Outlined.CloudUpload,
+                        label = "Upload",
+                        glassColor = ambient.surfaceGlass,
+                        borderColor = ambient.cardBorder,
+                        accentColor = MaterialTheme.colorScheme.secondary,
+                        onClick = { directUploadLauncher.launch(arrayOf("*/*")) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    CompactActionCard(
+                        icon = Icons.Outlined.Download,
+                        label = "Downloads",
+                        glassColor = ambient.surfaceGlass,
+                        borderColor = ambient.cardBorder,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        onClick = onOpenDownloads,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            if (isPrivateMode) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f))
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f),
+                                RoundedCornerShape(18.dp)
+                            )
+                            .clickable { onIncineratePrivate() }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .testTag("start_incinerate_private_button"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.LocalFireDepartment,
+                            contentDescription = "Wipe",
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Wipe Private Session",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(64.dp))
             }
         }
     }
 
-    // Add Speed Dial Modal Dialog
     if (showAddDialDialog) {
         var titleInput by remember { mutableStateOf("") }
         var urlInput by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { showAddDialDialog = false },
-            title = {
-                Text(
-                    text = "Pin Destination to Start Page",
-                    style = MaterialTheme.typography.titleLarge
-                )
-            },
+            title = { Text("Pin Site", style = MaterialTheme.typography.titleLarge) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
-                        label = { Text("Label (e.g. Economist)") },
+                        label = { Text("Name") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -632,7 +510,7 @@ fun VellumStartPage(
                     OutlinedTextField(
                         value = urlInput,
                         onValueChange = { urlInput = it },
-                        label = { Text("Domain or URL (e.g. economist.com)") },
+                        label = { Text("URL (e.g. youtube.com)") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -661,12 +539,10 @@ fun VellumStartPage(
         )
     }
 
-    // Long-press Speed Dial delete confirmation
     dialToDelete?.let { target ->
         AlertDialog(
             onDismissRequest = { dialToDelete = null },
-            title = { Text("Remove ${target.title}?") },
-            text = { Text("Remove ${target.domain} from your pinned Start Page destinations?") },
+            title = { Text("Unpin ${target.title}?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -689,75 +565,172 @@ fun VellumStartPage(
 }
 
 @Composable
-private fun TelemetryStatBlock(
-    value: String,
-    label: String
+private fun ScenicAmbientWallpaper(
+    ambient: VellumAmbientTheme,
+    isPrivateMode: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            text = value,
-            fontFamily = JetBrainsMonoFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 20.sp,
-            color = MaterialTheme.colorScheme.onSurface
+    val infiniteTransition = rememberInfiniteTransition(label = "aurora_drift")
+    val drift by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 9000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow_drift"
+    )
+
+    val topColor = if (isPrivateMode) PrivateVaultSkyTop else ambient.skyTop
+    val midColor = if (isPrivateMode) PrivateVaultSkyBottom else ambient.skyMid
+    val bottomColor = if (isPrivateMode) PrivateVaultSkyBottom else ambient.skyBottom
+    val glow1 = if (isPrivateMode) PrivateVaultAccent else ambient.glowPrimary
+    val glow2 = if (isPrivateMode) Color(0xFF38BDF8) else ambient.glowSecondary
+
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+
+        // 1. Rich Multi-Stop Atmospheric Sky
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(topColor, midColor, bottomColor)
+            )
         )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+
+        // 2. Soft Drifting Aurora / Sunset Light Orbs
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(glow1.copy(alpha = 0.28f), Color.Transparent),
+                center = Offset(w * (0.25f + 0.15f * drift), h * 0.22f),
+                radius = w * 0.65f
+            ),
+            center = Offset(w * (0.25f + 0.15f * drift), h * 0.22f),
+            radius = w * 0.65f
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(glow2.copy(alpha = 0.24f), Color.Transparent),
+                center = Offset(w * (0.78f - 0.12f * drift), h * 0.36f),
+                radius = w * 0.6f
+            ),
+            center = Offset(w * (0.78f - 0.12f * drift), h * 0.36f),
+            radius = w * 0.6f
+        )
+
+        // 3. Layered Scenic Mountain / Silk Wave Horizon
+        val backWave = Path().apply {
+            moveTo(0f, h * 0.76f)
+            cubicTo(
+                w * 0.28f, h * (0.68f - 0.02f * drift),
+                w * 0.65f, h * (0.82f + 0.02f * drift),
+                w, h * 0.72f
+            )
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(path = backWave, color = ambient.horizonBack.copy(alpha = 0.65f))
+
+        val frontWave = Path().apply {
+            moveTo(0f, h * 0.84f)
+            cubicTo(
+                w * 0.35f, h * (0.89f - 0.02f * drift),
+                w * 0.72f, h * (0.77f + 0.02f * drift),
+                w, h * 0.83f
+            )
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(path = frontWave, color = ambient.horizonFront.copy(alpha = 0.82f))
+    }
+}
+
+@Composable
+private fun GlassCircleIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    val ambient = LocalAmbientTheme.current
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(ambient.surfaceGlass)
+            .border(1.dp, ambient.cardBorder, CircleShape)
+            .testTag(testTag)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(19.dp)
         )
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SpeedDialItemCard(
+private fun VisualSpeedDialIcon(
     dial: BookmarkEntity,
+    glassColor: Color,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val parsedAccent = remember(dial.accentHex) {
         runCatching { Color(android.graphics.Color.parseColor(dial.accentHex)) }
-            .getOrDefault(Color(0xFFC86D51))
+            .getOrDefault(Color(0xFF00E5C3))
     }
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
-            .padding(vertical = 6.dp)
+            .padding(vertical = 4.dp)
             .testTag("speed_dial_${dial.domain}"),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(54.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(MaterialTheme.colorScheme.surface)
+                .size(58.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(glassColor)
                 .border(
                     width = 1.dp,
-                    color = MaterialTheme.colorScheme.outline,
-                    shape = RoundedCornerShape(18.dp)
+                    color = parsedAccent.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(20.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
-                    .background(parsedAccent.copy(alpha = 0.16f)),
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                parsedAccent.copy(alpha = 0.32f),
+                                parsedAccent.copy(alpha = 0.14f)
+                            )
+                        )
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = dial.monogramLetter,
-                    fontFamily = NewsreaderSerifFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
+                    fontFamily = PlusJakartaSansFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 19.sp,
                     color = parsedAccent
                 )
             }
@@ -765,11 +738,85 @@ private fun SpeedDialItemCard(
 
         Text(
             text = dial.title,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun AddSpeedDialTile(
+    glassColor: Color,
+    borderColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp)
+            .testTag("add_speed_dial_button"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(58.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(glassColor)
+                .border(1.dp, borderColor, RoundedCornerShape(20.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Add,
+                contentDescription = "Pin Site",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        Text(
+            text = "Pin",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CompactActionCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    glassColor: Color,
+    borderColor: Color,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(glassColor)
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = accentColor,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1
         )
     }
 }

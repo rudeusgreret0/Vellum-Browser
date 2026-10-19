@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,16 +24,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoStories
-import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FolderZip
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -54,7 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,9 +72,11 @@ import com.example.data.SearchEngineOption
 import com.example.data.SiteShieldRuleEntity
 import com.example.data.UserSettings
 import com.example.ui.theme.JetBrainsMonoFamily
-import com.example.ui.theme.NewsreaderSerifFamily
+import com.example.ui.theme.PlusJakartaSansFamily
+import com.example.ui.theme.VellumAmbientTheme
 import com.example.ui.theme.VellumThemeMode
 import com.example.viewmodel.LibrarySection
+import com.example.viewmodel.UploadedFileSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -102,19 +108,18 @@ fun VellumLibrarySheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.86f)
+                .fillMaxHeight(0.84f)
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
                 .testTag("library_sheet"),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                text = "Vellum Library",
-                style = MaterialTheme.typography.headlineLarge,
+                text = "Library",
+                style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground
             )
 
-            // Segmented Section Tabs
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -147,7 +152,7 @@ fun VellumLibrarySheet(
             OutlinedTextField(
                 value = searchFilter,
                 onValueChange = { searchFilter = it },
-                placeholder = { Text("Filter library items…") },
+                placeholder = { Text("Search…") },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
@@ -201,7 +206,7 @@ fun VellumLibrarySheet(
                                         ) {
                                             Text(
                                                 text = bm.monogramLetter,
-                                                fontFamily = NewsreaderSerifFamily,
+                                                fontFamily = PlusJakartaSansFamily,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
@@ -226,7 +231,7 @@ fun VellumLibrarySheet(
                                     IconButton(onClick = { onDeleteBookmark(bm.id) }) {
                                         Icon(
                                             imageVector = Icons.Outlined.DeleteOutline,
-                                            contentDescription = "Delete Bookmark",
+                                            contentDescription = "Delete",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -270,30 +275,21 @@ fun VellumLibrarySheet(
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
-                                            text = "${article.domain.uppercase(Locale.US)} · ${article.readingMinutes} MIN READ",
-                                            fontFamily = JetBrainsMonoFamily,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
                                             text = article.title,
-                                            fontFamily = NewsreaderSerifFamily,
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 18.sp,
+                                            style = MaterialTheme.typography.titleMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = article.excerpt,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
+                                            text = "${article.domain} · ${article.readingMinutes}m",
+                                            fontFamily = JetBrainsMonoFamily,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                     IconButton(onClick = { onDeleteOfflineArticle(article.id) }) {
                                         Icon(
                                             imageVector = Icons.Outlined.DeleteOutline,
-                                            contentDescription = "Delete Offline Article",
+                                            contentDescription = "Delete",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -304,37 +300,24 @@ fun VellumLibrarySheet(
                 }
 
                 LibrarySection.HISTORY -> {
-                    // Quick Clear Range Strip
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Clear:",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                         OutlinedButton(
                             onClick = { onClearHistoryRange(15) },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("15m", fontSize = 12.sp)
+                            Text("Clear 15m", fontSize = 12.sp)
                         }
                         OutlinedButton(
                             onClick = { onClearHistoryRange(60) },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("1h", fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { onClearHistoryRange(1440) },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("24h", fontSize = 12.sp)
+                            Text("Clear 1h", fontSize = 12.sp)
                         }
                         OutlinedButton(
                             onClick = { onClearHistoryRange(null) },
@@ -342,7 +325,7 @@ fun VellumLibrarySheet(
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.testTag("clear_all_history_button")
                         ) {
-                            Text("All", fontSize = 12.sp)
+                            Text("Clear All", fontSize = 12.sp)
                         }
                     }
 
@@ -397,7 +380,7 @@ fun VellumLibrarySheet(
                                     IconButton(onClick = { onDeleteHistoryItem(item.id) }) {
                                         Icon(
                                             imageVector = Icons.Outlined.DeleteOutline,
-                                            contentDescription = "Delete History Item",
+                                            contentDescription = "Delete",
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -441,13 +424,27 @@ private fun LibraryTabButton(
 @Composable
 fun VellumDownloadsVaultSheet(
     downloads: List<DownloadItemEntity>,
+    recentUploads: List<UploadedFileSummary> = emptyList(),
+    onStartDirectDownload: (String) -> Unit = {},
+    onFilesUploaded: (List<UploadedFileSummary>) -> Unit = {},
     onDeleteDownload: (Long) -> Unit,
     onClearAllDownloads: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val categories = listOf("All", "Documents", "Images", "Media", "Archives")
     var selectedCategory by remember { mutableStateOf("All") }
+    var directDownloadUrl by remember { mutableStateOf("") }
+
+    val uploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val summaries = uris.map { extractFileMetadata(context, it) }
+            onFilesUploaded(summaries)
+        }
+    }
 
     val filtered = remember(downloads, selectedCategory) {
         if (selectedCategory == "All") downloads
@@ -462,7 +459,7 @@ fun VellumDownloadsVaultSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.80f)
+                .fillMaxHeight(0.86f)
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
                 .testTag("downloads_sheet"),
@@ -473,21 +470,92 @@ fun VellumDownloadsVaultSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "Downloads Vault",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Categorized artifacts with tabular size verification",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Downloads & Uploads",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
                 if (downloads.isNotEmpty()) {
                     TextButton(onClick = onClearAllDownloads) {
-                        Text("Clear List")
+                        Text("Clear")
+                    }
+                }
+            }
+
+            // Direct File Download URL Bar + Upload Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = directDownloadUrl,
+                    onValueChange = { directDownloadUrl = it },
+                    placeholder = { Text("Paste file URL to download…") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("direct_download_input")
+                )
+                Button(
+                    onClick = {
+                        val urlToFetch = directDownloadUrl.trim().ifBlank {
+                            "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+                        }
+                        onStartDirectDownload(urlToFetch)
+                        directDownloadUrl = ""
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.testTag("start_direct_download_button")
+                ) {
+                    Icon(Icons.Outlined.Download, contentDescription = "Download", modifier = Modifier.size(18.dp))
+                }
+                OutlinedButton(
+                    onClick = { uploadLauncher.launch(arrayOf("*/*")) },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.testTag("sheet_upload_button")
+                ) {
+                    Icon(Icons.Outlined.CloudUpload, contentDescription = "Upload", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            // Show Recently Uploaded Files if any
+            if (recentUploads.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "RECENT UPLOADS (${recentUploads.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(recentUploads) { up ->
+                            val kbStr = remember(up.sizeBytes) { "${(up.sizeBytes / 1024).coerceAtLeast(1)} KB" }
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
+                                color = MaterialTheme.colorScheme.surface
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.CloudUpload,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "${up.name} ($kbStr)",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -558,7 +626,7 @@ fun VellumDownloadsVaultSheet(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${item.category} · $mbString · ${item.domain} · ${item.status}",
+                                        text = "${item.category} · $mbString · ${item.status}",
                                         fontFamily = JetBrainsMonoFamily,
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -568,7 +636,7 @@ fun VellumDownloadsVaultSheet(
                             IconButton(onClick = { onDeleteDownload(item.id) }) {
                                 Icon(
                                     imageVector = Icons.Outlined.DeleteOutline,
-                                    contentDescription = "Delete Download",
+                                    contentDescription = "Delete",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -585,6 +653,7 @@ fun VellumDownloadsVaultSheet(
 fun VellumSettingsSheet(
     settings: UserSettings,
     siteRules: List<SiteShieldRuleEntity>,
+    onUpdateAmbientTheme: (VellumAmbientTheme) -> Unit = {},
     onUpdateTheme: (VellumThemeMode) -> Unit,
     onUpdateSearchEngine: (SearchEngineOption) -> Unit,
     onUpdateGlobalShield: (Boolean) -> Unit,
@@ -605,90 +674,95 @@ fun VellumSettingsSheet(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.88f)
+                .fillMaxHeight(0.86f)
                 .padding(horizontal = 20.dp)
                 .testTag("settings_sheet"),
             contentPadding = PaddingValues(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Vellum Preferences",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Craftsmanship, privacy, and ergonomics without bloat.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
             }
 
-            // 1. Visual Palette & Surface Theme
+            // 1. Visual Scenic Theme Swatches
             item {
-                PreferenceSectionCard(title = "DESIGN PALETTE") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = settings.themeMode == VellumThemeMode.CARBON_NIGHT,
-                            onClick = { onUpdateTheme(VellumThemeMode.CARBON_NIGHT) },
-                            label = { Text("Carbon & Brass") },
-                            modifier = Modifier.testTag("theme_carbon_chip")
-                        )
-                        FilterChip(
-                            selected = settings.themeMode == VellumThemeMode.ALABASTER_DAY,
-                            onClick = { onUpdateTheme(VellumThemeMode.ALABASTER_DAY) },
-                            label = { Text("Alabaster & Ink") },
-                            modifier = Modifier.testTag("theme_alabaster_chip")
-                        )
-                        FilterChip(
-                            selected = settings.themeMode == VellumThemeMode.SYSTEM,
-                            onClick = { onUpdateTheme(VellumThemeMode.SYSTEM) },
-                            label = { Text("System") }
-                        )
+                PreferenceSectionCard(title = "WALLPAPER & THEME") {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(VellumAmbientTheme.entries) { theme ->
+                            val isSelected = settings.ambientTheme == theme
+                            Column(
+                                modifier = Modifier
+                                    .width(104.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { onUpdateAmbientTheme(theme) }
+                                    .border(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) theme.primaryAccent else MaterialTheme.colorScheme.outline,
+                                        shape = RoundedCornerShape(16.dp)
+                                    )
+                                    .background(theme.surfaceColor)
+                                    .padding(10.dp)
+                                    .testTag("theme_chip_${theme.id}"),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                colors = listOf(
+                                                    theme.skyTop,
+                                                    theme.glowPrimary,
+                                                    theme.glowSecondary
+                                                )
+                                            )
+                                        )
+                                )
+                                Text(
+                                    text = theme.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = theme.textPrimary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
                     ToggleSettingRow(
-                        title = "Bottom-Anchored Omnibox Dock",
-                        subtitle = "Keep URL bar, Shield, and Tabs within one-thumb reach at the bottom",
+                        title = "Bottom Toolbar",
                         checked = settings.bottomToolbar,
                         onCheckedChange = onUpdateBottomToolbar
                     )
                 }
             }
 
-            // 2. Search Engine (Brave Default)
+            // 2. Search Engine
             item {
-                PreferenceSectionCard(title = "DEFAULT SEARCH ENGINE") {
+                PreferenceSectionCard(title = "SEARCH ENGINE") {
                     SearchEngineOption.entries.forEach { engine ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable { onUpdateSearchEngine(engine) }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = engine.label,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = engine.homeUrl,
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = engine.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                             RadioButton(
                                 selected = settings.searchEngine == engine,
                                 onClick = { onUpdateSearchEngine(engine) }
@@ -698,81 +772,40 @@ fun VellumSettingsSheet(
                 }
             }
 
-            // 3. Three-Stage Native Ad & Tracker Shield
+            // 3. Ad & Popup Shield
             item {
-                PreferenceSectionCard(title = "NATIVE AD & TRACKER SHIELD") {
+                PreferenceSectionCard(title = "AD & POPUP BLOCKER") {
                     ToggleSettingRow(
-                        title = "Master Network & Cosmetic Shield",
-                        subtitle = "Block ad servers, behavioral analytics, and collapse empty DOM ad slots",
+                        title = "Block Ads & Video Pre-Rolls",
                         checked = settings.globalShieldEnabled,
                         onCheckedChange = onUpdateGlobalShield
                     )
                     ToggleSettingRow(
-                        title = "Aggressive Strict Mode by Default",
-                        subtitle = "Block cross-origin third-party beacons, fingerprinting, and social pixels",
+                        title = "Strict Popup & Tracker Blocker",
                         checked = settings.strictShieldByDefault,
                         onCheckedChange = onUpdateStrictShield
                     )
                     ToggleSettingRow(
-                        title = "Strip URL Tracking Tokens",
-                        subtitle = "Automatically remove utm_*, fbclid, gclid, and msclkid on navigation & share",
+                        title = "Clean Tracking Links",
                         checked = settings.stripTrackingParams,
                         onCheckedChange = onUpdateStripParams
                     )
                     ToggleSettingRow(
-                        title = "Auto-Hide GDPR Cookie Consent Banners",
-                        subtitle = "Suppress intrusive OneTrust, Cookiebot, and consent overlays via CSS",
+                        title = "Hide Cookie Popups",
                         checked = settings.hideCookieBanners,
                         onCheckedChange = onUpdateHideCookieBanners
                     )
                 }
             }
 
-            // 4. Nocturne Private Vault
+            // 4. Private Vault
             item {
-                PreferenceSectionCard(title = "NOCTURNE PRIVATE VAULT") {
+                PreferenceSectionCard(title = "PRIVATE VAULT") {
                     ToggleSettingRow(
-                        title = "Require Biometric / PIN Lock for Private Tabs",
-                        subtitle = "Gate access to open Private Vault tabs with Biometrics or PIN (1234)",
+                        title = "PIN / Biometric Lock",
                         checked = settings.privateVaultLockEnabled,
                         onCheckedChange = onUpdatePrivateVaultLock
                     )
-                }
-            }
-
-            // 5. Per-Site Shield Exceptions Summary
-            if (siteRules.isNotEmpty()) {
-                item {
-                    PreferenceSectionCard(title = "PER-SITE SHIELD RULES (${siteRules.size})") {
-                        siteRules.forEach { rule ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = rule.domain,
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = buildString {
-                                        append(if (rule.shieldEnabled) "Protected" else "Paused")
-                                        if (rule.strictMode) append(" · Strict")
-                                        if (rule.zappedSelectors.isNotEmpty()) {
-                                            append(" · ${rule.zappedSelectors.size} zapped")
-                                        }
-                                    },
-                                    fontFamily = JetBrainsMonoFamily,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -793,13 +826,13 @@ private fun PreferenceSectionCard(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp)),
+                .clip(RoundedCornerShape(18.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp)),
             color = MaterialTheme.colorScheme.surface
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 content()
             }
@@ -810,7 +843,6 @@ private fun PreferenceSectionCard(
 @Composable
 private fun ToggleSettingRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
@@ -819,18 +851,12 @@ private fun ToggleSettingRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange

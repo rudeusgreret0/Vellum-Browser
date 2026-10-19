@@ -1160,6 +1160,7 @@ fun VellumEditorialReaderOverlay(
 fun VellumPeekPreviewSheet(
     peekSession: PeekPreviewSession,
     onPromoteToTab: () -> Unit,
+    onDownloadUrl: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1185,12 +1186,6 @@ fun VellumPeekPreviewSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "VELLUM PEEK · LINK INSPECTOR",
-                        fontFamily = JetBrainsMonoFamily,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
                         text = peekSession.domain,
                         style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1203,17 +1198,17 @@ fun VellumPeekPreviewSheet(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(
-                            if (isHttps) MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f)
+                            if (isHttps) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
                             else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
                         )
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = if (isHttps) "HTTPS ENCRYPTED" else "UNENCRYPTED HTTP",
+                        text = if (isHttps) "HTTPS" else "HTTP",
                         fontFamily = JetBrainsMonoFamily,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isHttps) MaterialTheme.colorScheme.secondary
+                        color = if (isHttps) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.tertiary
                     )
                 }
@@ -1226,23 +1221,15 @@ fun VellumPeekPreviewSheet(
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "SANITIZED DESTINATION URL",
-                        fontFamily = JetBrainsMonoFamily,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = peekSession.url,
-                        fontFamily = JetBrainsMonoFamily,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                Text(
+                    text = peekSession.url,
+                    fontFamily = JetBrainsMonoFamily,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(14.dp)
+                )
             }
 
             Row(
@@ -1250,11 +1237,15 @@ fun VellumPeekPreviewSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
-                    onClick = onDismiss,
+                    onClick = onDownloadUrl,
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("peek_download_button")
                 ) {
-                    Text("Dismiss")
+                    Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Download")
                 }
                 Button(
                     onClick = onPromoteToTab,
@@ -1265,7 +1256,7 @@ fun VellumPeekPreviewSheet(
                 ) {
                     Icon(Icons.Outlined.OpenInFull, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Open in New Tab")
+                    Text("New Tab")
                 }
             }
         }

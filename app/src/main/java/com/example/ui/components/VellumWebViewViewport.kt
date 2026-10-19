@@ -1,22 +1,30 @@
 package com.example.ui.components
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.database.Cursor
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.URLUtil
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -44,14 +52,19 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.engine.BlockedDomainEntry
 import com.example.engine.UrlSanitizerAndSearch
 import com.example.engine.VellumShieldEngine
 import com.example.viewmodel.BrowserTab
 import com.example.viewmodel.BrowserViewModel
+import com.example.viewmodel.UploadedFileSummary
 import com.example.viewmodel.WebViewCommand
+import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 private const val DESKTOP_USER_AGENT =
@@ -88,6 +101,7 @@ fun VellumWebViewViewport(
     webViewCommand: WebViewCommand?,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val currentTabState by rememberUpdatedState(activeTab)
@@ -95,26 +109,71 @@ fun VellumWebViewViewport(
     val currentStripParams by rememberUpdatedState(stripTrackingParams)
     val currentViewModel by rememberUpdatedState(viewModel)
 
-    // Persistent single WebView instance across tab switches & Start Page transitions
-    // so we never trigger aw_browser_terminator by destroying active renderer processes
+    // Pending callback for <input type="file"> inside webpages
+    var pendingFileChooserCallback by remember {
+        mutableStateOf<ValueCallback<Array<Uri>>?>(null)
+    }
+
+    val webFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        val callback = pendingFileChooserCallback
+        pendingFileChooserCallback = null
+        if (uris.isNotEmpty()) {
+            callback?.onReceiveValue(uris.toTypedArray())
+            val summaries = uris.map { uri -> extractFileMetadata(context, uri) }
+            currentViewModel.onFilesSelectedForUpload(summaries, fromWebsiteInput = true)
+        } else {
+            // Mandatory in Android WebView so the file input doesn't lock up on cancel
+            callback?.onReceiveValue(null)
+        }
+    }
+
+    // Thread-safe buffer for blocked requests so 100 blocked ads never cause main-thread UI lag
+    val pendingBlockedMap = remember { ConcurrentHashMap<String, BlockedDomainEntry>() }
+
+    LaunchedEffect(activeTab.id) {
+        while (true) {
+            delay(700)
+            if (pendingBlockedMap.isNotEmpty()) {
+                val snapshot = ArrayList<BlockedDomainEntry>(pendingBlockedMap.size)
+                val keys = pendingBlockedMap.keys().toList()
+                for (k in keys) {
+                    val removed = pendingBlockedMap.remove(k)
+                    if (removed != null) snapshot.add(removed)
+                }
+                if (snapshot.isNotEmpty()) {
+                    currentViewModel.onRequestsBlockedBatch(
+                        tabId = currentTabState.id,
+                        batchEntries = snapshot
+                    )
+                }
+            }
+        }
+    }
+
     var rendererGeneration by remember { mutableIntStateOf(0) }
     var webViewRef by remember(rendererGeneration) { mutableStateOf<WebView?>(null) }
     var lastLoadedTabId by remember(rendererGeneration) { mutableStateOf("") }
     var lastLoadedUrl by remember(rendererGeneration) { mutableStateOf("") }
     var lastAppliedDesktopMode by remember(rendererGeneration) { mutableStateOf<Boolean?>(null) }
 
-    // Load or synchronize URL when activeTab.url or activeTab.id changes
+    // Synchronize visibility, pause state, and URL loading
     LaunchedEffect(webViewRef, activeTab.id, activeTab.url, rendererGeneration) {
         val wv = webViewRef ?: return@LaunchedEffect
         val targetUrl = activeTab.url
         if (targetUrl.isBlank()) {
-            // When returning to Start Page, pause media/JS timers instead of destroying the WebView
             wv.stopLoading()
+            wv.onPause()
+            wv.visibility = View.GONE
             return@LaunchedEffect
         }
+        wv.visibility = View.VISIBLE
+        wv.onResume()
         if (lastLoadedTabId != activeTab.id || lastLoadedUrl != targetUrl) {
             lastLoadedTabId = activeTab.id
             lastLoadedUrl = targetUrl
+            pendingBlockedMap.clear()
             if (targetUrl == "vellum://shield-test") {
                 val shieldOn = currentViewModel.isShieldEnabledForDomain("vellum://shield-test")
                 val html = VellumShieldEngine.buildShieldTestBenchHtml(shieldOn)
@@ -131,7 +190,6 @@ fun VellumWebViewViewport(
         }
     }
 
-    // Apply Desktop User-Agent only when desktop mode explicitly changes
     LaunchedEffect(webViewRef, activeTab.isDesktopMode) {
         val wv = webViewRef ?: return@LaunchedEffect
         if (lastAppliedDesktopMode != null && lastAppliedDesktopMode != activeTab.isDesktopMode) {
@@ -144,7 +202,6 @@ fun VellumWebViewViewport(
         lastAppliedDesktopMode = activeTab.isDesktopMode
     }
 
-    // Activate or deactivate Zap Distraction element picker in the live DOM
     LaunchedEffect(webViewRef, isZapModeActive) {
         val wv = webViewRef ?: return@LaunchedEffect
         if (activeTab.url.isNotBlank()) {
@@ -153,7 +210,6 @@ fun VellumWebViewViewport(
         }
     }
 
-    // Handle explicit WebView commands (Back, Forward, Reload, Reader extraction, Find in page)
     LaunchedEffect(webViewRef, webViewCommand) {
         val wv = webViewRef ?: return@LaunchedEffect
         when (val cmd = webViewCommand) {
@@ -223,8 +279,6 @@ fun VellumWebViewViewport(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
-                        // Keep renderer process at IMPORTANT priority even when covered by sheets/StartPage
-                        // so the OS low-memory killer never SIGKILLs the renderer process (code -1)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
                         }
@@ -233,6 +287,8 @@ fun VellumWebViewViewport(
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             databaseEnabled = true
+                            allowFileAccess = true
+                            allowContentAccess = true
                             loadsImagesAutomatically = true
                             mediaPlaybackRequiresUserGesture = true
                             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -272,7 +328,8 @@ fun VellumWebViewViewport(
                             val hitResult = hitView.hitTestResult
                             val extra = hitResult.extra
                             if ((hitResult.type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
-                                    hitResult.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) &&
+                                    hitResult.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE ||
+                                    hitResult.type == WebView.HitTestResult.IMAGE_TYPE) &&
                                 !extra.isNullOrBlank()
                             ) {
                                 currentViewModel.openPeekPreview(extra)
@@ -282,14 +339,17 @@ fun VellumWebViewViewport(
                             }
                         }
 
+                        // Real System DownloadManager integration
                         setDownloadListener(
-                            DownloadListener { url, _, contentDisposition, mimeType, contentLength ->
+                            DownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
                                 val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-                                currentViewModel.recordFileDownload(
-                                    fileName = fileName,
+                                currentViewModel.startRealFileDownload(
                                     url = url,
+                                    userAgent = userAgent,
+                                    contentDisposition = contentDisposition,
                                     mimeType = mimeType ?: "application/octet-stream",
-                                    contentLength = contentLength
+                                    contentLength = contentLength,
+                                    suggestedName = fileName
                                 )
                             }
                         )
@@ -316,12 +376,21 @@ fun VellumWebViewViewport(
                                 )
 
                                 if (decision.shouldBlock) {
-                                    mainHandler.post {
-                                        currentViewModel.onRequestBlocked(
-                                            tabId = tabSnapshot.id,
-                                            matchedDomain = decision.matchedDomain,
-                                            category = decision.category
-                                        )
+                                    // Record into lock-free ConcurrentHashMap instead of flooding mainHandler
+                                    val domainKey = decision.matchedDomain
+                                    pendingBlockedMap.compute(domainKey) { _, existing ->
+                                        if (existing != null) {
+                                            existing.copy(
+                                                count = existing.count + 1,
+                                                lastTimestamp = System.currentTimeMillis()
+                                            )
+                                        } else {
+                                            BlockedDomainEntry(
+                                                domain = domainKey,
+                                                category = decision.category,
+                                                count = 1
+                                            )
+                                        }
                                     }
                                     return decision.response
                                 }
@@ -340,13 +409,36 @@ fun VellumWebViewViewport(
                                     return true
                                 }
 
+                                val scheme = targetUri.scheme?.lowercase().orEmpty()
+                                if (scheme != "http" && scheme != "https" && scheme != "vellum") {
+                                    // Block non-http app-hijack intents / market:// redirects
+                                    return true
+                                }
+
+                                val tabSnapshot = currentTabState
+                                val shieldEnabled = currentViewModel.isShieldEnabledForDomain(tabSnapshot.domain)
+
+                                // Block malicious ad/popup/betting redirects on link clicks
+                                if (shieldEnabled && VellumShieldEngine.isMaliciousRedirectOrPopup(targetUri, tabSnapshot.url)) {
+                                    pendingBlockedMap.compute(targetUri.host?.removePrefix("www.") ?: "popup") { _, existing ->
+                                        existing?.copy(count = existing.count + 1)
+                                            ?: BlockedDomainEntry(
+                                                domain = targetUri.host?.removePrefix("www.") ?: "popup",
+                                                category = com.example.engine.TrackerCategory.POPUP_MALWARE,
+                                                count = 1
+                                            )
+                                    }
+                                    currentViewModel.showBanner("🛡 Blocked popup redirect")
+                                    return true
+                                }
+
                                 if (currentStripParams && targetUrl.contains("?")) {
                                     val sanitized = UrlSanitizerAndSearch.sanitizeUrl(targetUrl)
                                     if (sanitized.strippedParamsCount > 0 && sanitized.finalUrl != targetUrl) {
                                         lastLoadedUrl = sanitized.finalUrl
                                         view?.loadUrl(sanitized.finalUrl)
                                         currentViewModel.showBanner(
-                                            "Stripped ${sanitized.strippedParamsCount} tracking param(s)"
+                                            "Cleaned ${sanitized.strippedParamsCount} tracking token(s)"
                                         )
                                         return true
                                     }
@@ -358,6 +450,7 @@ fun VellumWebViewViewport(
                                 super.onPageStarted(view, url, favicon)
                                 val tabSnapshot = currentTabState
                                 if (tabSnapshot.url.isBlank()) return
+                                injectCosmeticShield(view)
                                 val effectiveUrl = if (lastLoadedUrl == "vellum://shield-test") {
                                     "vellum://shield-test"
                                 } else {
@@ -448,7 +541,7 @@ fun VellumWebViewViewport(
                                 super.onProgressChanged(view, newProgress)
                                 val tabSnapshot = currentTabState
                                 if (tabSnapshot.url.isBlank()) return
-                                if (newProgress == 100 || abs(newProgress - lastReportedProgress) >= 15) {
+                                if (newProgress == 100 || abs(newProgress - lastReportedProgress) >= 20) {
                                     lastReportedProgress = newProgress
                                     val effectiveUrl = if (lastLoadedUrl == "vellum://shield-test") {
                                         "vellum://shield-test"
@@ -468,19 +561,43 @@ fun VellumWebViewViewport(
                                     }
                                 }
                             }
+
+                            // Native support for <input type="file"> uploads on ANY website!
+                            override fun onShowFileChooser(
+                                webView: WebView?,
+                                filePathCallback: ValueCallback<Array<Uri>>?,
+                                fileChooserParams: FileChooserParams?
+                            ): Boolean {
+                                pendingFileChooserCallback?.onReceiveValue(null)
+                                pendingFileChooserCallback = filePathCallback
+                                val acceptTypes = fileChooserParams?.acceptTypes
+                                    ?.filter { it.isNotBlank() && it.contains("/") }
+                                    ?.toTypedArray()
+                                val mimeFilters = if (acceptTypes.isNullOrEmpty()) {
+                                    arrayOf("*/*")
+                                } else {
+                                    acceptTypes
+                                }
+                                runCatching {
+                                    webFilePickerLauncher.launch(mimeFilters)
+                                }.onFailure {
+                                    pendingFileChooserCallback?.onReceiveValue(null)
+                                    pendingFileChooserCallback = null
+                                }
+                                return true
+                            }
                         }
                     }.also { created ->
                         webViewRef = created
                     }
                 },
-                update = { /* Managed via LaunchedEffects */ },
+                update = { /* Handled via LaunchedEffects */ },
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("browser_webview")
             )
         }
 
-        // Floating HUD Banner when Zap Distraction Mode is active
         if (isZapModeActive) {
             Row(
                 modifier = Modifier
@@ -489,12 +606,12 @@ fun VellumWebViewViewport(
                     .fillMaxWidth()
                     .background(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                        shape = RoundedCornerShape(14.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
                     .border(
                         width = 1.dp,
                         color = MaterialTheme.colorScheme.primary,
-                        shape = RoundedCornerShape(14.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -511,8 +628,8 @@ fun VellumWebViewViewport(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Zap Mode: Tap any element on the page to hide it permanently",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "Tap any element on page to erase it",
+                        style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
@@ -522,11 +639,36 @@ fun VellumWebViewViewport(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
-                        contentDescription = "Cancel Zap Mode",
+                        contentDescription = "Cancel",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
     }
+}
+
+fun extractFileMetadata(context: Context, uri: Uri): UploadedFileSummary {
+    var displayName = uri.lastPathSegment ?: "Selected_File"
+    var sizeBytes = 0L
+    val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+
+    runCatching {
+        val cursor: Cursor? = context.contentResolver.query(uri, null, null, null, null)
+        cursor?.use { c ->
+            if (c.moveToFirst()) {
+                val nameIdx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIdx = c.getColumnIndex(OpenableColumns.SIZE)
+                if (nameIdx != -1) displayName = c.getString(nameIdx) ?: displayName
+                if (sizeIdx != -1 && !c.isNull(sizeIdx)) sizeBytes = c.getLong(sizeIdx)
+            }
+        }
+    }
+
+    return UploadedFileSummary(
+        name = displayName,
+        sizeBytes = sizeBytes,
+        mimeType = mimeType,
+        uriString = uri.toString()
+    )
 }
